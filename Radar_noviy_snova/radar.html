@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Polar Plot</title>
+    <script src='https://cdn.plot.ly/plotly-2.35.2.min.js'></script>
+    <style>
+        .container {
+            display: flex;
+            align-items: flex-start;
+            background-color: #f5e6e8;
+            padding: 20px;
+            height: 100vh;
+            color: black;
+        }
+        .plot {
+            flex: 3;
+            margin-right: 20px;
+        }
+        .controls {
+            flex: 1;
+        }
+        .controls h3, .controls label, .controls input, .controls button {
+            display: block; 
+            margin: 10px 0; 
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="plot" id="myDiv">
+            <!-- Полярный график будет нарисован здесь -->
+        </div>
+        <div class="controls centered">
+            <h3>Змінити параметри радара</h3>
+
+            <label for="measurementsPerRotation">Measurements Per Rotation (рази):</label>
+            <input type="number" id="measurementsPerRotation" value="360">
+
+            <label for="rotationSpeed">Rotation Speed (об/хв):</label>
+            <input type="number" id="rotationSpeed" value="60">
+
+            <label for="beamWidth">Beam Width (градус):</label>
+            <input type="number" id="beamWidth" value="1">
+
+            <label for="numberOfTargets">Number Of Targets:</label>
+            <input type="number" id="numberOfTargets" value="1">
+
+            <label for="targetSpeed">Target Speed (км/год):</label>
+            <input type="number" id="targetSpeed" value="100">
+
+            <label for="emulationZoneSize">Emulation Zone Size (км):</label>
+            <input type="number" id="emulationZoneSize" value="200">
+
+            <button onclick="updateRadarConfig()">Надіслати параметри</button>
+        </div>
+    </div>
+
+    <script>
+        var ws = new WebSocket('ws://localhost:4000');
+
+        ws.onopen = function() {
+            console.log("Підключено до WebSocket сервера");
+        };
+
+        ws.onmessage = function(event) {
+            try {
+                var message = JSON.parse(event.data); // данные в формате JSON
+
+                if (message.echoResponses && message.echoResponses.length > 0) {
+                    var pulseDuration = message.pulseDuration;
+                    var scanAngle = message.scanAngle;
+                    var echoResponses = message.echoResponses;
+
+                    var time = echoResponses[0].time;
+                    var power = echoResponses[0].power;
+                    var radius = calculatedTheRadius(time);
+
+                    console.log("pulseDuration:", pulseDuration);
+                    console.log("scanAngle:", scanAngle);
+                    console.log("time:", time);
+                    console.log("power:", power);
+                    console.log("radius:", radius);
+
+                    updatePlot(pulseDuration, scanAngle, radius, power);
+                }
+            } catch (e) {
+                console.error("Помилка під час парсингу JSON:", e);
+            }
+        };
+
+        ws.onclose = function() {
+            console.log("З'єднання закрито");
+        };
+
+        function calculatedTheRadius(time) {
+            return (300000 * time) / 2; // Вычисляем радиус в километрах
+        }
+
+        function updatePlot(pulseDuration, scanAngle, radius, power) {
+            var r = [radius];
+            var theta = [scanAngle];
+
+            var markerColor, markerSize;
+
+            if (power > 0.5) {
+                markerColor = "red";
+                markerSize = 25;
+            } else if (power > 0.05) {
+                markerColor = "orange";
+                markerSize = 20;
+            } else if (power > 0.005) {
+                markerColor = "yellow";
+                markerSize = 15;
+            } else {
+                markerColor = "blue";
+                markerSize = 10;
+            }
+
+            var trace = {
+                type: "scatterpolargl",
+                r: r,
+                theta: theta,
+                mode: "markers",
+                marker: {
+                    color: markerColor,
+                    size: markerSize,
+                    line: {
+                        color: "white"
+                    },
+                },
+                cliponaxis: false
+            };
+
+            var layout = {
+                title: "Полярний графік із даними відстаней і потужностей",
+                font: {
+                    size: 15
+                },
+                polar: {
+                    bgcolor: "grey",
+                    angularaxis: {
+                        tickwidth: 2,
+                        linewidth: 3,
+                        layer: "below traces"
+                    },
+                    radialaxis: {
+                        side: "counterclockwise",
+                        showline: true,
+                        linewidth: 2,
+                        tickwidth: 2,
+                        gridcolor: "white",
+                        gridwidth: 2,
+                        range: [0, 200],
+                        title: "Відстань (км)"
+                    }
+                },
+                paper_bgcolor: "white"
+            };
+
+            Plotly.newPlot('myDiv', [trace], layout);
+        }
+
+        function updateRadarConfig() {
+            var measurementsPerRotation = document.getElementById("measurementsPerRotation").value;
+            var rotationSpeed = document.getElementById("rotationSpeed").value;
+            var beamWidth = document.getElementById("beamWidth").value;
+            var numberOfTargets = document.getElementById("numberOfTargets").value;
+            var targetSpeed = document.getElementById("targetSpeed").value;
+            var emulationZoneSize = document.getElementById("emulationZoneSize").value;
+
+            var radarConfig = {
+                measurementsPerRotation: measurementsPerRotation,
+                rotationSpeed: rotationSpeed,
+                beamWidth: beamWidth,
+                numberOfTargets: numberOfTargets,
+                targetSpeed: targetSpeed,
+                emulationZoneSize: emulationZoneSize
+            };
+
+            fetch('http://localhost:4000/config', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(radarConfig)
+            })
+            .then(response => {
+                if (response.ok) {
+                    return response.json();
+                } else {
+                    throw new Error('Помилка під час виконання запиту: ' + response.statusText);
+                }
+            })
+            .then(data => {
+                console.log("Запит виконано успішно:", data);
+            })
+            .catch(error => {
+                console.error("Помилка:", error);
+            });
+        }
+    </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Polar Plot</title>
+    <script src='https://cdn.plot.ly/plotly-2.35.2.min.js'></script>
+    <style>
+        body {
+            background-color: #202020;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div id="myDiv" style="width: 80%; margin: 0 auto;"></div>
+
+    <script>
+        var ws = new WebSocket('ws://localhost:4000');
+
+        ws.onopen = function() {
+            console.log("Підключено до WebSocket сервера");
+        };
+
+        ws.onmessage = function(event) {
+            try {
+                var message = JSON.parse(event.data);
+
+                if (message.echoResponses && message.echoResponses.length > 0) {
+                    var pulseDuration = message.pulseDuration;
+                    var scanAngle = message.scanAngle;
+                    var echoResponses = message.echoResponses;
+
+                    var time = echoResponses[0].time;
+                    var power = echoResponses[0].power;
+                    var radius = calculatedTheRadius(time);
+
+                    updatePlot(pulseDuration, scanAngle, radius, power);
+                }
+            } catch (e) {
+                console.error("Помилка під час парсингу JSON:", e);
+            }
+        };
+
+        ws.onclose = function() {
+            console.log("З'єднання закрито");
+        };
+
+        function calculatedTheRadius(time) {
+            return (300000 * time) / 2; // Вычисляем радиус в километрах
+        }
+
+        function updatePlot(pulseDuration, scanAngle, radius, power) {
+            var r = [radius];
+            var theta = [scanAngle];
+
+            var markerColor;
+            if (power > 0.5) {
+                markerColor = "rgba(0, 255, 0, 1)"; // Яркий зелёный
+            } else if (power > 0.05) {
+                markerColor = "rgba(0, 255, 255, 1)"; // Яркий голубой
+            } else if (power > 0.005) {
+                markerColor = "rgba(255, 0, 255, 1)"; // Яркий пурпурный
+            } else {
+                markerColor = "rgba(255, 255, 0, 1)"; // Яркий жёлтый
+            }
+
+            var trace = {
+                type: "scatterpolargl",
+                r: r,
+                theta: theta,
+                mode: "markers",
+                marker: {
+                    color: markerColor,
+                    size: 20,
+                    line: {
+                        color: "white",
+                        width: 1
+                    }
+                },
+                cliponaxis: false
+            };
+
+            var layout = {
+                title: {
+                    text: "Полярний графік із даними відстаней і потужностей",
+                    font: {
+                        size: 20,
+                        color: "white"
+                    }
+                },
+                polar: {
+                    bgcolor: "#000000", // Чёрный фон полярного графика
+                    angularaxis: {
+                        color: "white", // Белые линии
+                        gridcolor: "rgba(255, 255, 255, 0.2)", // Полупрозрачные белые линии сетки
+                        tickcolor: "white",
+                        tickwidth: 1,
+                        linewidth: 1
+                    },
+                    radialaxis: {
+                        color: "white", // Белые линии оси
+                        gridcolor: "rgba(255, 255, 255, 0.2)", // Полупрозрачные белые линии сетки
+                        linewidth: 1,
+                        tickcolor: "white",
+                        tickwidth: 1,
+                        range: [0, 200], // Диапазон радиальной оси
+                        title: {
+                            text: "Відстань (км)",
+                            color: "white"
+                        }
+                    }
+                },
+                paper_bgcolor: "#202020" // Чёрный фон бумаги
+            };
+
+            Plotly.newPlot('myDiv', [trace], layout);
+        }
+    </script>
+</body>
+</html>
